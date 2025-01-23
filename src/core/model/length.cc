@@ -241,7 +241,7 @@ Length::TryParse (double value, const std::string& unitString)
   NS_LOG_FUNCTION (value << unitString);
 
   bool validUnit = false;
-  Length::Unit unit;
+  Length::Unit unit = Length::Unit();
 
   std::tie (validUnit, unit) = FromString (unitString);
 

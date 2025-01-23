@@ -363,6 +363,9 @@ FtmRequestHeader::FtmRequestHeader ()
 {
   m_trigger = 0;
   m_ftm_params_set = false;
+  m_dialog_token = 0;  // Initialize dialog token
+  m_t5 = 0;            // Initialize t5
+  m_t6 = 0; 
 }
 
 FtmRequestHeader::~FtmRequestHeader ()
@@ -373,29 +376,55 @@ FtmRequestHeader::~FtmRequestHeader ()
 uint32_t
 FtmRequestHeader::GetSerializedSize (void) const
 {
+  uint32_t size = 1 + 1 + 6 + 6; // Trigger, dialog token, t5, t6
   if (m_ftm_params_set)
     {
-      return 1 + m_ftm_params.GetSerializedSize();
+      size += m_ftm_params.GetSerializedSize();
     }
-  else
-    {
-      return 1;
-    }
+  return size;
 }
 
 void
 FtmRequestHeader::Serialize (Buffer::Iterator start) const
 {
   start.WriteU8(m_trigger);
+  start.WriteU8(m_dialog_token);  // Serialize dialog token
+
+  // Serialize t5 and t6 (48-bit timestamps)
+  for (int i = 0; i < 6; ++i)
+    {
+      start.WriteU8((m_t5 >> (40 - i * 8)) & 0xFF);
+    }
+  for (int i = 0; i < 6; ++i)
+    {
+      start.WriteU8((m_t6 >> (40 - i * 8)) & 0xFF);
+    }
+
   if (m_ftm_params_set)
     {
       m_ftm_params.Serialize(start);
     }
 }
+
+
 uint32_t
 FtmRequestHeader::Deserialize (Buffer::Iterator start)
 {
   m_trigger = start.ReadU8();
+  m_dialog_token = start.ReadU8();  // Deserialize dialog token
+
+  m_t5 = 0;
+  m_t6 = 0;
+
+  // Deserialize t5 and t6 (48-bit timestamps)
+  for (int i = 0; i < 6; ++i)
+    {
+      m_t5 = (m_t5 << 8) | start.ReadU8();
+    }
+  for (int i = 0; i < 6; ++i)
+    {
+      m_t6 = (m_t6 << 8) | start.ReadU8();
+    }
 
   if (start.GetRemainingSize() >= m_ftm_params.GetSerializedSize()
       && start.PeekU8() == 206)
@@ -404,18 +433,57 @@ FtmRequestHeader::Deserialize (Buffer::Iterator start)
       m_ftm_params_set = true;
       return 1 + m_ftm_params.GetSerializedSize();
     }
-  return 1; // the number of bytes consumed.
+  return 1;
 }
+
 
 void
 FtmRequestHeader::Print (std::ostream &os) const
 {
-  os << "trigger=" << m_trigger;
+  os << "trigger=" << m_trigger
+     << ", dialog_token=" << (uint32_t)m_dialog_token
+     << ", t5=" << m_t5 << ", t6=" << m_t6;
   if (m_ftm_params_set)
     {
       os << ", FTM_PARAMS: ";
       m_ftm_params.Print(os);
     }
+}
+
+void
+FtmRequestHeader::SetDialogToken (uint8_t dialog_token)
+{
+  m_dialog_token = dialog_token;
+}
+
+uint8_t
+FtmRequestHeader::GetDialogToken (void) const
+{
+  return m_dialog_token;
+}
+
+void
+FtmRequestHeader::SetT5 (uint64_t t5)
+{
+  m_t5 = t5;
+}
+
+uint64_t
+FtmRequestHeader::GetT5 (void) const
+{
+  return m_t5;
+}
+
+void
+FtmRequestHeader::SetT6 (uint64_t t6)
+{
+  m_t6 = t6;
+}
+
+uint64_t
+FtmRequestHeader::GetT6 (void) const
+{
+  return m_t6;
 }
 
 void

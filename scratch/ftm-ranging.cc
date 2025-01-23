@@ -266,7 +266,7 @@ int main (int argc, char *argv[])
   //load FTM map for usage
   map = CreateObject<WirelessFtmErrorModel::FtmMap> ();
   if (selected_error_mode != 0) {
-      map->LoadMap ("src/wifi/ftm_map/dim_202.map");
+      map->LoadMap ("src/wifi/ftm_map/FTM_Wireless_Error.map");
   }
   //set FTM map through attribute system
 //  Config::SetDefault ("ns3::WirelessFtmErrorModel::FtmMap", PointerValue (map));

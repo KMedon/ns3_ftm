@@ -48,13 +48,28 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("FtmExample");
 
+
 void SessionOver (FtmSession session)
 {
-  NS_LOG_UNCOND ("RTT: " << session.GetMeanRTT ());
-//  std::cout << "RTT: " << session.GetMeanRTT () << std::endl;
+  std::cout << "RTT: " << session.GetMeanRTT () << std::endl;
   std::cout << "Mean Signal Strength: " << session.GetMeanSignalStrength () << std::endl;
   std::cout << "RTT list size: " << session.GetIndividualRTT().size() << std::endl;
+  std::cout << "T-FTM list size: " << session.GetIndividualTFTM().size() << std::endl;
+  std::cout << "T-FTM: " << session.GetMeanTFTM() << std::endl;
+  // Get and print the T-FTM propagation time
+ /* int64_t meanTFTM = session.GetMeanTFTM();
+  std::list<int64_t> individualTFTMs = session.GetIndividualTFTM();
+
+  std::cout << "Mean T-FTM Propagation Time: " << meanTFTM << " ps" << std::endl;
+
+  std::cout << "Individual T-FTM Propagation Times: ";
+  for (int64_t tftm : individualTFTMs)
+  {
+    std::cout << tftm << " ps, ";
+  }
+  std::cout << std::endl;*/
 }
+
 
 Ptr<WirelessFtmErrorModel::FtmMap> map;
 
@@ -113,6 +128,11 @@ static void GenerateTraffic (Ptr<WifiNetDevice> ap, Ptr<WifiNetDevice> sta, Addr
 int main (int argc, char *argv[])
 {
   //double rss = -80;  // -dBm
+
+  LogComponentEnable("FtmExample", LOG_LEVEL_ALL);
+  LogComponentEnable("FtmSession", LOG_LEVEL_ALL);
+
+  LogComponentEnableAll(LOG_PREFIX_TIME);
 
   //enable FTM through attribute system
   Config::SetDefault ("ns3::RegularWifiMac::FTM_Enabled", BooleanValue(true));
@@ -187,7 +207,7 @@ int main (int argc, char *argv[])
 
   //load FTM map for usage
   map = CreateObject<WirelessFtmErrorModel::FtmMap> ();
-  map->LoadMap ("src/wifi/ftm_map/dim_16.map");
+  map->LoadMap ("src/wifi/ftm_map/FTM_Wireless_Error.map");
   //set FTM map through attribute system
 //  Config::SetDefault ("ns3::WirelessFtmErrorModel::FtmMap", PointerValue (map));
 

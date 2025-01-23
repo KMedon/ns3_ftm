@@ -282,7 +282,7 @@ int main (int argc, char *argv[])
   //load FTM map for usage
   map = CreateObject<WirelessFtmErrorModel::FtmMap> ();
   if (selected_error_mode != 0) {
-      map->LoadMap ("src/wifi/ftm_map/dim_62.map");
+      map->LoadMap ("src/wifi/ftm_map/FTM_Wireless_Error.map");
   }
 
 //  std::random_device rd; // obtain a random number from hardware

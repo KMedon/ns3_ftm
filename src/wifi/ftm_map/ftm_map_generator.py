@@ -146,12 +146,13 @@ def generateMap(args):
 #	else:
 #		z = np.random.rand(xx.shape[0], xx.shape[1]) * bias - bias/2
 
-	f = interpolate.interp2d(x, y, z, kind='cubic')
+	f = interpolate.RegularGridInterpolator((x, y), z, method='cubic')
 
 	x_new = np.linspace(xmin, xmax, x_bins)
 	y_new = np.linspace(ymin, ymax, y_bins)
 
-	ftm_map = f(x_new, y_new)
+	points = np.array(np.meshgrid(x_new, y_new)).T.reshape(-1, 2)
+	ftm_map = f(points).reshape(len(x_new), len(y_new))
 
 	writeMap(ftm_map, xmin, xmax, ymin, ymax, bias, dcorr, resolution, output)
 

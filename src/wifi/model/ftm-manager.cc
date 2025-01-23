@@ -73,105 +73,182 @@ FtmManager::~FtmManager ()
 void
 FtmManager::PhyTxBegin(Ptr<const Packet> packet, double num)
 {
-
   Time now = Simulator::Now();
   int64_t pico_sec = now.GetPicoSeconds();
-  pico_sec &= 0x0000FFFFFFFFFFFF;
+  pico_sec &= 0x0000FFFFFFFFFFFF;  // Mask the timestamp to fit within the required format
   sent_packets++;
+
   Ptr<Packet> copy = packet->Copy();
   WifiMacHeader hdr;
   copy->RemoveHeader(hdr);
-  if(hdr.IsMgt() && hdr.IsAction()) {
-      WifiActionHeader action_hdr;
-      copy->RemoveHeader(action_hdr);
-      if(action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION) {
-          WifiActionHeader::ActionValue action = action_hdr.GetAction();
-          if (action.publicAction == WifiActionHeader::FTM_RESPONSE)
-            {
-              Ptr<FtmSession> session = FindSession (hdr.GetAddr1());
-              if (session != 0)
-                {
-                  FtmResponseHeader ftm_resp_hdr;
-                  copy->RemoveHeader(ftm_resp_hdr);
-                  session->SetT1(ftm_resp_hdr.GetDialogToken(), pico_sec);
 
-                  received_packets = 0;
-                  awaiting_ack = true;
+  if (hdr.IsMgt() && hdr.IsAction())
+  {
+    WifiActionHeader action_hdr;
+    copy->RemoveHeader(action_hdr);
 
-                  PacketInPieces pieces;
-                  pieces.mac_hdr = hdr;
-                  pieces.action_hdr = action_hdr;
-                  pieces.ftm_res_hdr = ftm_resp_hdr;
-                  m_current_tx_packet = pieces;
-                }
-            }
+    if (action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION)
+    {
+      WifiActionHeader::ActionValue action = action_hdr.GetAction();
+
+      // **FTM Request Handling (Set t5)**
+      if (action.publicAction == WifiActionHeader::FTM_REQUEST)
+      {
+        Ptr<FtmSession> session = FindSession(hdr.GetAddr1());
+        if (session != 0)
+        {
+          FtmRequestHeader ftm_req_hdr;
+          copy->RemoveHeader(ftm_req_hdr);
+
+          // Set t5 using the current simulation time (departure time)
+          session->SetT5(ftm_req_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] FTM Request: t5 (Departure Time) set at " << pico_sec << std::endl;
+
+          // Store the current transmission packet details
+          PacketInPieces pieces;
+          pieces.mac_hdr = hdr;
+          pieces.action_hdr = action_hdr;
+          pieces.ftm_req_hdr = ftm_req_hdr;
+          m_current_tx_packet = pieces;
+
+          // Awaiting acknowledgement
+          received_packets = 0;
+          awaiting_ack = true;
+        }
       }
+
+      // **FTM Response Handling (Set t1, unchanged)**
+      if (action.publicAction == WifiActionHeader::FTM_RESPONSE)
+      {
+        Ptr<FtmSession> session = FindSession(hdr.GetAddr1());
+        if (session != 0)
+        {
+          FtmResponseHeader ftm_resp_hdr;
+          copy->RemoveHeader(ftm_resp_hdr);
+
+          session->SetT1(ftm_resp_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] FTM Response: t1 set at " << pico_sec << std::endl;
+
+          PacketInPieces pieces;
+          pieces.mac_hdr = hdr;
+          pieces.action_hdr = action_hdr;
+          pieces.ftm_res_hdr = ftm_resp_hdr;
+          m_current_tx_packet = pieces;
+
+          // Awaiting acknowledgement
+          received_packets = 0;
+          awaiting_ack = true;
+        }
+      }
+    }
   }
-  else if(hdr.IsAck()) {
-      if(sending_ack && sent_packets == 1) {
-          if(m_ack_to == hdr.GetAddr1()) {
-              sending_ack = false;
-              Ptr<FtmSession> session = FindSession (m_current_rx_packet.mac_hdr.GetAddr2());
-              if (session != 0)
-                {
-                  session->SetT3(m_current_rx_packet.ftm_res_hdr.GetDialogToken(), pico_sec);
-                }
-          }
+
+  // **ACK Handling (Set t3, unchanged)**
+  else if (hdr.IsAck())
+  {
+    if (sending_ack && sent_packets == 1)
+    {
+      if (m_ack_to == hdr.GetAddr1())
+      {
+        sending_ack = false;
+        Ptr<FtmSession> session = FindSession(m_current_rx_packet.mac_hdr.GetAddr2());
+        if (session != 0)
+        {
+          session->SetT3(m_current_rx_packet.ftm_res_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] ACK: t3 set at " << pico_sec << std::endl;
+        }
       }
+    }
   }
 }
+
 
 void
 FtmManager::PhyRxBegin(Ptr<const Packet> packet, RxPowerWattPerChannelBand rxPowersW)
 {
-  NS_LOG_FUNCTION (this);
+  NS_LOG_FUNCTION(this);
   Time now = Simulator::Now();
   int64_t pico_sec = now.GetPicoSeconds();
-  pico_sec &= 0x0000FFFFFFFFFFFF;
-  Ptr<Packet> copy = packet->Copy();
+  pico_sec &= 0x0000FFFFFFFFFFFF;  // Mask the timestamp to fit within the required format
   received_packets++;
+
+  Ptr<Packet> copy = packet->Copy();
   WifiMacHeader hdr;
   copy->RemoveHeader(hdr);
-  if(hdr.GetAddr1() == m_mac_address){
-      if(hdr.IsMgt() && hdr.IsAction()) {
-          WifiActionHeader action_hdr;
-          copy->RemoveHeader(action_hdr);
-          if(action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION) {
-              Mac48Address partner = hdr.GetAddr2();
-              if(action_hdr.GetAction().publicAction == WifiActionHeader::FTM_RESPONSE) {
-                  sending_ack = true;
-                  sent_packets = 0;
-                  m_ack_to = partner;
 
-                  FtmResponseHeader ftm_res_hdr;
-                  copy->RemoveHeader(ftm_res_hdr);
+  if (hdr.GetAddr1() == m_mac_address)
+  {
+    if (hdr.IsMgt() && hdr.IsAction())
+    {
+      WifiActionHeader action_hdr;
+      copy->RemoveHeader(action_hdr);
+      
+      Mac48Address partner = hdr.GetAddr2();
 
-                  Ptr<FtmSession> session = FindSession(partner);
-                  if (session != 0 && ftm_res_hdr.GetDialogToken() != 0)
-                    {
-                      session->SetT2(ftm_res_hdr.GetDialogToken(), pico_sec);
-                      PacketInPieces pieces;
-                      pieces.mac_hdr = hdr;
-                      pieces.action_hdr = action_hdr;
-                      pieces.ftm_res_hdr = ftm_res_hdr;
-                      m_current_rx_packet = pieces;
-                    }
-              }
-          }
+      // **FTM Request Handling (Set t6)**
+      if (action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION && action_hdr.GetAction().publicAction == WifiActionHeader::FTM_REQUEST)
+      {
+        Ptr<FtmSession> session = FindSession(partner);
+        if (session != 0)
+        {
+          FtmRequestHeader ftm_req_hdr;
+          copy->RemoveHeader(ftm_req_hdr);
+
+          // Set t6 using the current simulation time (arrival time)
+          session->SetT6(ftm_req_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] FTM Request: t6 (Arrival Time) set at " << pico_sec << std::endl;
+
+          PacketInPieces pieces;
+          pieces.mac_hdr = hdr;
+          pieces.action_hdr = action_hdr;
+          pieces.ftm_req_hdr = ftm_req_hdr;
+          m_current_rx_packet = pieces;
+        }
       }
-      if(hdr.IsAck()) {
-          if(awaiting_ack && received_packets == 1) {
-              awaiting_ack = false;
-              Ptr<FtmSession> session = FindSession (m_current_tx_packet.mac_hdr.GetAddr1());
-              if (session != 0)
-                {
-                  session->SetT4(m_current_tx_packet.ftm_res_hdr.GetDialogToken(), pico_sec);
-                }
-          }
-          else if(awaiting_ack && received_packets > 1) { //this needs to be checked also for non ack, cause if ack never arrives but other packet, its still an error
-              awaiting_ack = false;
-          }
+
+      // **FTM Response Handling (Set t2, unchanged)**
+      if (action_hdr.GetAction().publicAction == WifiActionHeader::FTM_RESPONSE)
+      {
+        sending_ack = true;
+        sent_packets = 0;
+        m_ack_to = partner;
+
+        FtmResponseHeader ftm_res_hdr;
+        copy->RemoveHeader(ftm_res_hdr);
+
+        Ptr<FtmSession> session = FindSession(partner);
+        if (session != 0 && ftm_res_hdr.GetDialogToken() != 0)
+        {
+          session->SetT2(ftm_res_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] FTM Response: t2 set at " << pico_sec << std::endl;
+
+          PacketInPieces pieces;
+          pieces.mac_hdr = hdr;
+          pieces.action_hdr = action_hdr;
+          pieces.ftm_res_hdr = ftm_res_hdr;
+          m_current_rx_packet = pieces;
+        }
       }
+    }
+
+    // **ACK Handling (Set t4, unchanged)**
+    if (hdr.IsAck())
+    {
+      if (awaiting_ack && received_packets == 1)
+      {
+        awaiting_ack = false;
+        Ptr<FtmSession> session = FindSession(m_current_tx_packet.mac_hdr.GetAddr1());
+        if (session != 0)
+        {
+          session->SetT4(m_current_tx_packet.ftm_res_hdr.GetDialogToken(), pico_sec);
+          std::cout << "[DEBUG] ACK: t4 set at " << pico_sec << std::endl;
+        }
+      }
+      else if (awaiting_ack && received_packets > 1)
+      {
+        awaiting_ack = false;
+      }
+    }
   }
 }
 
