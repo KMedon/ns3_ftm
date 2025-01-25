@@ -54,20 +54,17 @@ void SessionOver (FtmSession session)
   std::cout << "RTT: " << session.GetMeanRTT () << std::endl;
   std::cout << "Mean Signal Strength: " << session.GetMeanSignalStrength () << std::endl;
   std::cout << "RTT list size: " << session.GetIndividualRTT().size() << std::endl;
-  std::cout << "T-FTM list size: " << session.GetIndividualTFTM().size() << std::endl;
-  std::cout << "T-FTM: " << session.GetMeanTFTM() << std::endl;
-  // Get and print the T-FTM propagation time
- /* int64_t meanTFTM = session.GetMeanTFTM();
-  std::list<int64_t> individualTFTMs = session.GetIndividualTFTM();
 
-  std::cout << "Mean T-FTM Propagation Time: " << meanTFTM << " ps" << std::endl;
+    // NEW: Print T-FTM stats
+  std::cout << "Mean T-FTM: " << session.GetMeanTftm() << std::endl;
 
-  std::cout << "Individual T-FTM Propagation Times: ";
-  for (int64_t tftm : individualTFTMs)
-  {
-    std::cout << tftm << " ps, ";
-  }
-  std::cout << std::endl;*/
+  // If you want individual T-FTMs:
+  auto tftmList = session.GetIndividualTftm();
+  std::cout << "T-FTM count: " << tftmList.size() << std::endl;
+  for (auto tpValue : tftmList)
+    {
+      std::cout << "  T-FTM value: " << tpValue << std::endl;
+    }
 }
 
 

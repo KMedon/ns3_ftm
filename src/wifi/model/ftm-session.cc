@@ -23,6 +23,7 @@
 #include "ns3/core-module.h"
 #include "ns3/mgt-headers.h"
 #include "ns3/wifi-mac-header.h"
+#include "ns3/log.h"
 
 
 namespace ns3 {
@@ -142,14 +143,6 @@ FtmSession::ProcessFtmRequest(FtmRequestHeader ftm_req)
                 m_previous_dialog_token = 0;
                 m_number_of_bursts_remaining = 1 << m_ftm_params.GetNumberOfBurstsExponent(); // 2 ^ bursts exponent
                 m_ftms_per_burst_remaining = m_ftm_params.GetFtmsPerBurst();
-
-                // Create a new dialog for the session
-                Ptr<FtmDialog> dialog = CreateNewDialog(m_current_dialog_token);
-                dialog->t6 = Simulator::Now().GetPicoSeconds();
-                m_ftm_dialogs.insert({m_current_dialog_token, dialog});
-                std::cout << "[DEBUG] t6 (FTM Request Arrival) set to: " << dialog->t6 << std::endl;
-
-                // Session begin logic
                 SessionBegin();
             }
             else
@@ -248,9 +241,25 @@ FtmSession::ProcessFtmResponse (FtmResponseHeader ftm_res)
           follow_up_dialog->t4 = ftm_res.GetTimeOfArrival();
         
           CalculateRTT (follow_up_dialog);
-          CalculateTFTM (follow_up_dialog);
           //after RTT is calculated, we are done with this dialog and can delete it from the list
           DeleteDialog(ftm_res.GetFollowUpDialogToken());
+        }
+    }
+
+  if (ftm_res.IsEtaRSet())
+    {
+      // We can find the "previous_dialog_token" or the same token
+      uint8_t token = ftm_res.GetDialogToken();
+      if (token == 0)
+        {
+          token = ftm_res.GetFollowUpDialogToken(); // fallback
+        }
+      Ptr<FtmDialog> dlg = FindDialog(token);
+      if (dlg != 0)
+        {
+          double etaR = ftm_res.GetEtaR();
+          // compute T-FTM if t2, t3, t5 are set
+          ComputeTftm(dlg, etaR); // see the new function below
         }
     }
 
@@ -394,17 +403,8 @@ FtmSession::SessionBegin (void)
       hdr.SetAction(WifiActionHeader::PUBLIC_ACTION, action);
       packet->AddHeader(hdr);
 
-      Ptr<FtmDialog> dialog = CreateNewDialog(m_current_dialog_token);
-      dialog->t5 = Simulator::Now().GetPicoSeconds();
-      m_ftm_dialogs.insert({m_current_dialog_token, dialog});
-      std::cout << "[DEBUG] t5 (FTM Request Departure) set to: " << dialog->t5 << std::endl;
-
       Time check_active = MilliSeconds(50);
       m_session_active_check_event = Simulator::Schedule(check_active, &FtmSession::CheckSessionActive, this);
-
-      WifiMacHeader mac_hdr;
-      mac_hdr.SetAddr1(m_partner_addr);
-      send_packet(packet, mac_hdr);
     }
   else if (m_session_type == FTM_RESPONDER)
     {
@@ -519,6 +519,12 @@ FtmSession::SendNextFtmPacket (void)
           ftm_res_hdr.SetFollowUpDialogToken(m_previous_dialog_token);
           ftm_res_hdr.SetTimeOfDeparture(previous_dialog->t1);
           ftm_res_hdr.SetTimeOfArrival(previous_dialog->t4);
+
+          if (previous_dialog->t1 != 0 && previous_dialog->t4 != 0 && previous_dialog->t6 != 0)
+            {
+              double etaR = ComputeEtaR(previous_dialog); // see below
+              ftm_res_hdr.SetEtaR(etaR); // attach ratio
+            }
         }
       if (m_ftms_per_burst_remaining <= 0 && m_number_of_bursts_remaining <= 0)
         {
@@ -676,60 +682,29 @@ FtmSession::SetT4 (uint8_t dialog_token, uint64_t timestamp)
     }
 }
 
-void FtmSession::SetT5 (uint8_t dialog_token, uint64_t timestamp)
+void
+FtmSession::SetT5 (uint8_t dialog_token, uint64_t timestamp)
 {
   Ptr<FtmDialog> dialog = FindDialog (dialog_token);
-  if(dialog != 0)
-  {
-    dialog->t5 = timestamp;
-    std::cout << "[DEBUG] Setting t5 for dialog token: " << static_cast<int>(dialog_token) << " with timestamp: " << timestamp << std::endl;
-  }
-}
-
-void FtmSession::SetT6 (uint8_t dialog_token, uint64_t timestamp)
-{
-  Ptr<FtmDialog> dialog = FindDialog (dialog_token);
-  if(dialog != 0)
-  {
-    dialog->t6 = timestamp;
-  }
-}
-
-void FtmSession::CalculateTFTM(Ptr<FtmDialog> dialog)
-{
-    // Initialize Tp to 0
-    int64_t Tp = 0;
-
-    // Check if all timestamps are set; if not, return Tp = 0
-    if (dialog->t1 == 0 || dialog->t2 == 0 || dialog->t3 == 0 || 
-        dialog->t4 == 0) {
-        m_tftm_list.push_back(Tp);
-        std::cout << "[DEBUG] One or more timestamps are zero in CalculateTFTM." << std::endl;
-        return;
+  if(dialog == 0)
+    {
+      dialog = CreateNewDialog(dialog_token);
+      m_ftm_dialogs.insert({dialog_token, dialog});
     }
-
-    // Compute the required timestamp differences
-    int64_t TR_r = dialog->t4 - dialog->t1;   // TR_r = t4 - t1
-    int64_t TR_R = dialog->t4 - dialog->t6;   // TR_R = t4 - t6
-    int64_t TI_d = dialog->t3 - dialog->t2;   // TI_d = t3 - t2
-    int64_t TI_I = dialog->t3 - dialog->t5;   // TI_I = t3 - t5
-
-    // Calculate the ratio ηR
-    double nR = static_cast<double>(TR_r) / static_cast<double>(TR_R);
-
-    // Compute the time of flight (ToF), Tp
-    Tp = static_cast<int64_t>(((nR * TI_I) - TI_d) / 2);
-
-    // Print out the timestamps used for debugging purposes
-    std::cout << "[DEBUG] T-FTM t1 and t4: " << dialog->t1 << " " << dialog->t4 << std::endl;
-    std::cout << "[DEBUG] T-FTM t2 and t3: " << dialog->t2 << " " << dialog->t3 << std::endl;
-    std::cout << "[DEBUG] T-FTM t5 and t6: " << dialog->t5 << " " << dialog->t6 << std::endl;
-    std::cout << "[DEBUG] Computed Tp: " << Tp << std::endl;
-
-    // Store the computed Tp in the list
-    m_tftm_list.push_back(Tp);
+  dialog->t5 = timestamp;
 }
 
+void
+FtmSession::SetT6 (uint8_t dialog_token, uint64_t timestamp)
+{
+  Ptr<FtmDialog> dialog = FindDialog (dialog_token);
+  if(dialog == 0)
+    {
+      dialog = CreateNewDialog(dialog_token);
+      m_ftm_dialogs.insert({dialog_token, dialog});
+    }
+  dialog->t6 = timestamp;
+}
 
 void
 FtmSession::SetSignalStrength(uint8_t dialog_token, double sig_str)
@@ -776,29 +751,6 @@ std::map<uint8_t, Ptr<FtmSession::FtmDialog>>
 FtmSession::GetFtmDialogs (void)
 {
   return m_ftm_dialogs;
-}
-
-int64_t 
-FtmSession::GetMeanTFTM(void)
-{
-  if (m_tftm_list.size() == 0)
-  {
-    return 0;
-  }
-  
-  int64_t avg_tftm = 0;
-  for (int64_t curr : m_tftm_list)
-  {
-    avg_tftm += curr;
-  }
-  
-  avg_tftm /= (int64_t)m_tftm_list.size();
-  return avg_tftm;
-}
-
-std::list<int64_t> FtmSession::GetIndividualTFTM(void)
-{
-  return m_tftm_list;
 }
 
 int64_t
@@ -893,6 +845,101 @@ FtmSession::CalculateRTT (Ptr<FtmDialog> dialog)
       live_rtt (rtt);
     }
 }
+
+double
+FtmSession::ComputeEtaR (Ptr<FtmDialog> dialog)
+{
+  // We assume t4 > t1 and t4 > t6, but handle overflows:
+  uint64_t diff_t4_t1 = 0;
+  if (dialog->t4 >= dialog->t1)
+    {
+      diff_t4_t1 = dialog->t4 - dialog->t1;
+    }
+  else
+    {
+      diff_t4_t1 = (0xFFFFFFFFFFFF - dialog->t1) + dialog->t4;
+    }
+
+  uint64_t diff_t4_t6 = 0;
+  if (dialog->t4 >= dialog->t6)
+    {
+      diff_t4_t6 = dialog->t4 - dialog->t6;
+    }
+  else
+    {
+      diff_t4_t6 = (0xFFFFFFFFFFFF - dialog->t6) + dialog->t4;
+    }
+
+  if (diff_t4_t6 == 0)
+    {
+      return 0.0;
+    }
+  return (double) diff_t4_t1 / (double) diff_t4_t6;
+}
+
+void
+FtmSession::ComputeTftm (Ptr<FtmDialog> dialog, double etaR)
+{
+  // T^I_d = t3 - t2
+  // T^I = t3 - t5
+  if (dialog->t3 == 0 || dialog->t2 == 0 || dialog->t5 == 0)
+    {
+      // not enough timestamps yet
+      return;
+    }
+  int64_t diff_t3_t2 = 0;
+  if (dialog->t3 >= dialog->t2)
+    {
+      diff_t3_t2 = dialog->t3 - dialog->t2;
+    }
+  else
+    {
+      diff_t3_t2 = (0xFFFFFFFFFFFF - dialog->t2) + dialog->t3;
+    }
+
+  int64_t diff_t3_t5 = 0;
+  if (dialog->t3 >= dialog->t5)
+    {
+      diff_t3_t5 = dialog->t3 - dialog->t5;
+    }
+  else
+    {
+      diff_t3_t5 = (0xFFFFFFFFFFFF - dialog->t5) + dialog->t3;
+    }
+
+  // T^I_d = diff_t3_t2
+  // T^I   = diff_t3_t5
+  // T_p   = ( etaR * (T^I - T^I_d ) ) / 2
+  double TfI = (double) diff_t3_t5;  // T^I
+  double TdI = (double) diff_t3_t2;  // T^I_d
+  double Tp = (etaR * (TfI - TdI)) / 2.0;
+
+  m_tftm_list.push_back (Tp);
+  // For demonstration, we could log it or store it
+  NS_LOG_INFO ("T-FTM computed: " << Tp << " (psec?), ratio=" << etaR);
+}
+
+double
+FtmSession::GetMeanTftm (void)
+{
+  if (m_tftm_list.empty ())
+    {
+      return 0.0;
+    }
+  double sum = 0.0;
+  for (double val : m_tftm_list)
+    {
+      sum += val;
+    }
+  return sum / m_tftm_list.size();
+}
+
+std::list<double>
+FtmSession::GetIndividualTftm (void)
+{
+  return m_tftm_list;
+}
+
 
 bool
 FtmSession::CheckTimeStampEqualZero (Ptr<FtmDialog> dialog)

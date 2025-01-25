@@ -359,24 +359,10 @@ public:
    */
   bool GetFtmParamsSet (void);
 
-  void SetDialogToken (uint8_t dialog_token);  // Set the dialog token
-  uint8_t GetDialogToken (void) const;         // Get the dialog token
-
-  void SetT5 (uint64_t t5);  // Set the departure time (t5)
-  uint64_t GetT5 (void) const;  // Get the departure time (t5)
-
-  void SetT6 (uint64_t t6);  // Set the arrival time (t6)
-  uint64_t GetT6 (void) const;  // Get the arrival time (t6)
-
 private:
   uint8_t m_trigger;
-  uint64_t m_t5; // Time of Departure for FTM Request (t5)
-  uint64_t m_t6;
-  uint8_t m_dialog_token; // Dialog token for the FTM Request
   FtmParams m_ftm_params;
   bool m_ftm_params_set;
-  
-  bool m_big_endian; //!< If this system is big endian. Used for conversion of the 6 byte time stamps.
 };
 
 /**
@@ -507,6 +493,12 @@ public:
    */
   bool GetFtmParamsSet (void);
 
+  void SetEtaR (double etaR);
+
+  double GetEtaR () const;
+
+  bool IsEtaRSet () const;
+
 private:
   uint8_t m_dialog_token;
   uint8_t m_follow_up_dialog_token;
@@ -514,6 +506,8 @@ private:
   uint64_t m_toa;
   uint16_t m_tod_error;
   uint16_t m_toa_error;
+  double m_etaR;
+  bool m_etaRSet;
 
   FtmParams m_ftm_params;
   bool m_ftm_params_set;

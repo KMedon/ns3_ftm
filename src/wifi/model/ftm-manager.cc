@@ -20,6 +20,7 @@
 
 #include "ftm-manager.h"
 #include "ns3/core-module.h"
+#include "ns3/log.h"
 
 
 namespace ns3 {
@@ -74,8 +75,7 @@ void
 FtmManager::PhyTxBegin(Ptr<const Packet> packet, double num)
 {
   Time now = Simulator::Now();
-  int64_t pico_sec = now.GetPicoSeconds();
-  pico_sec &= 0x0000FFFFFFFFFFFF;  // Mask the timestamp to fit within the required format
+  int64_t pico_sec = now.GetPicoSeconds () & 0x0000FFFFFFFFFFFF;
   sent_packets++;
 
   Ptr<Packet> copy = packet->Copy();
@@ -90,33 +90,6 @@ FtmManager::PhyTxBegin(Ptr<const Packet> packet, double num)
     if (action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION)
     {
       WifiActionHeader::ActionValue action = action_hdr.GetAction();
-
-      // **FTM Request Handling (Set t5)**
-      if (action.publicAction == WifiActionHeader::FTM_REQUEST)
-      {
-        Ptr<FtmSession> session = FindSession(hdr.GetAddr1());
-        if (session != 0)
-        {
-          FtmRequestHeader ftm_req_hdr;
-          copy->RemoveHeader(ftm_req_hdr);
-
-          // Set t5 using the current simulation time (departure time)
-          session->SetT5(ftm_req_hdr.GetDialogToken(), pico_sec);
-          std::cout << "[DEBUG] FTM Request: t5 (Departure Time) set at " << pico_sec << std::endl;
-
-          // Store the current transmission packet details
-          PacketInPieces pieces;
-          pieces.mac_hdr = hdr;
-          pieces.action_hdr = action_hdr;
-          pieces.ftm_req_hdr = ftm_req_hdr;
-          m_current_tx_packet = pieces;
-
-          // Awaiting acknowledgement
-          received_packets = 0;
-          awaiting_ack = true;
-        }
-      }
-
       // **FTM Response Handling (Set t1, unchanged)**
       if (action.publicAction == WifiActionHeader::FTM_RESPONSE)
       {
@@ -140,6 +113,18 @@ FtmManager::PhyTxBegin(Ptr<const Packet> packet, double num)
           awaiting_ack = true;
         }
       }
+    else if (action.publicAction == WifiActionHeader::FTM_REQUEST)
+      {
+              // NEW: If we are the Initiator sending FTM Request, capture t5
+        Ptr<FtmSession> session = FindSession (hdr.GetAddr1 ());
+        if (session != 0)
+          {
+            // We'll store t5 in the same token used by the session’s first exchange
+            // Since the session code sets m_current_dialog_token=1, let's also use 1 here.
+            session->SetT5 (1, pico_sec); // NEW
+            std::cout << "[DEBUG] FTM Request: t5 set at " << pico_sec << std::endl;
+          }
+      } 
     }
   }
 
@@ -182,32 +167,13 @@ FtmManager::PhyRxBegin(Ptr<const Packet> packet, RxPowerWattPerChannelBand rxPow
     {
       WifiActionHeader action_hdr;
       copy->RemoveHeader(action_hdr);
-      
-      Mac48Address partner = hdr.GetAddr2();
-
       // **FTM Request Handling (Set t6)**
-      if (action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION && action_hdr.GetAction().publicAction == WifiActionHeader::FTM_REQUEST)
+      if (action_hdr.GetCategory() == WifiActionHeader::PUBLIC_ACTION)
       {
-        Ptr<FtmSession> session = FindSession(partner);
-        if (session != 0)
-        {
-          FtmRequestHeader ftm_req_hdr;
-          copy->RemoveHeader(ftm_req_hdr);
-
-          // Set t6 using the current simulation time (arrival time)
-          session->SetT6(ftm_req_hdr.GetDialogToken(), pico_sec);
-          std::cout << "[DEBUG] FTM Request: t6 (Arrival Time) set at " << pico_sec << std::endl;
-
-          PacketInPieces pieces;
-          pieces.mac_hdr = hdr;
-          pieces.action_hdr = action_hdr;
-          pieces.ftm_req_hdr = ftm_req_hdr;
-          m_current_rx_packet = pieces;
-        }
-      }
-
+        Mac48Address partner = hdr.GetAddr2();
+        WifiActionHeader::ActionValue actionVal = action_hdr.GetAction();
       // **FTM Response Handling (Set t2, unchanged)**
-      if (action_hdr.GetAction().publicAction == WifiActionHeader::FTM_RESPONSE)
+      if (actionVal.publicAction == WifiActionHeader::FTM_RESPONSE)
       {
         sending_ack = true;
         sent_packets = 0;
@@ -229,8 +195,19 @@ FtmManager::PhyRxBegin(Ptr<const Packet> packet, RxPowerWattPerChannelBand rxPow
           m_current_rx_packet = pieces;
         }
       }
+      else if (actionVal.publicAction == WifiActionHeader::FTM_REQUEST) // NEW
+        {
+        // We are the responder receiving an FTM Request, so capture t6
+          Ptr<FtmSession> session = FindSession (partner);
+          if (session != 0)
+            {
+            // We'll store t6 with dialogToken=1 (the first request)
+            session->SetT6 (1, pico_sec); // NEW
+            std::cout << "[DEBUG] FTM Request: t6 set at " << pico_sec << std::endl;
+            }
+        }
+      }
     }
-
     // **ACK Handling (Set t4, unchanged)**
     if (hdr.IsAck())
     {
@@ -346,7 +323,10 @@ FtmManager::ReceivedFtmRequest (Mac48Address partner, FtmRequestHeader ftm_req)
     {
       session = CreateNewSession(partner, FtmSession::FTM_RESPONDER);
     }
-  session->ProcessFtmRequest(ftm_req);
+  if (session != 0)
+    {
+      session->ProcessFtmRequest (ftm_req);
+    }
 }
 
 void
@@ -391,7 +371,10 @@ FtmManager::OverrideSession (Mac48Address partner, FtmRequestHeader ftm_req)
 {
   std::cout << "override" << std::endl;
   Ptr<FtmSession> session = CreateNewSession (partner, FtmSession::FTM_RESPONDER);
-  session->ProcessFtmRequest (ftm_req);
+  if (session != 0)
+    {
+      session->ProcessFtmRequest (ftm_req);
+    }
 }
 
 }

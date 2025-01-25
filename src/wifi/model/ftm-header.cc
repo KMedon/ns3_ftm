@@ -19,7 +19,7 @@
  */
 
 #include "ftm-header.h"
-
+#include "ns3/log.h"
 namespace ns3 {
 
 NS_OBJECT_ENSURE_REGISTERED (FtmParams);
@@ -363,9 +363,6 @@ FtmRequestHeader::FtmRequestHeader ()
 {
   m_trigger = 0;
   m_ftm_params_set = false;
-  m_dialog_token = 0;  // Initialize dialog token
-  m_t5 = 0;            // Initialize t5
-  m_t6 = 0; 
 }
 
 FtmRequestHeader::~FtmRequestHeader ()
@@ -376,55 +373,29 @@ FtmRequestHeader::~FtmRequestHeader ()
 uint32_t
 FtmRequestHeader::GetSerializedSize (void) const
 {
-  uint32_t size = 1 + 1 + 6 + 6; // Trigger, dialog token, t5, t6
   if (m_ftm_params_set)
     {
-      size += m_ftm_params.GetSerializedSize();
+      return 1 + m_ftm_params.GetSerializedSize();
     }
-  return size;
+  else
+    {
+      return 1;
+    }
 }
 
 void
 FtmRequestHeader::Serialize (Buffer::Iterator start) const
 {
   start.WriteU8(m_trigger);
-  start.WriteU8(m_dialog_token);  // Serialize dialog token
-
-  // Serialize t5 and t6 (48-bit timestamps)
-  for (int i = 0; i < 6; ++i)
-    {
-      start.WriteU8((m_t5 >> (40 - i * 8)) & 0xFF);
-    }
-  for (int i = 0; i < 6; ++i)
-    {
-      start.WriteU8((m_t6 >> (40 - i * 8)) & 0xFF);
-    }
-
   if (m_ftm_params_set)
     {
       m_ftm_params.Serialize(start);
     }
 }
-
-
 uint32_t
 FtmRequestHeader::Deserialize (Buffer::Iterator start)
 {
   m_trigger = start.ReadU8();
-  m_dialog_token = start.ReadU8();  // Deserialize dialog token
-
-  m_t5 = 0;
-  m_t6 = 0;
-
-  // Deserialize t5 and t6 (48-bit timestamps)
-  for (int i = 0; i < 6; ++i)
-    {
-      m_t5 = (m_t5 << 8) | start.ReadU8();
-    }
-  for (int i = 0; i < 6; ++i)
-    {
-      m_t6 = (m_t6 << 8) | start.ReadU8();
-    }
 
   if (start.GetRemainingSize() >= m_ftm_params.GetSerializedSize()
       && start.PeekU8() == 206)
@@ -433,57 +404,18 @@ FtmRequestHeader::Deserialize (Buffer::Iterator start)
       m_ftm_params_set = true;
       return 1 + m_ftm_params.GetSerializedSize();
     }
-  return 1;
+  return 1; // the number of bytes consumed.
 }
-
 
 void
 FtmRequestHeader::Print (std::ostream &os) const
 {
-  os << "trigger=" << m_trigger
-     << ", dialog_token=" << (uint32_t)m_dialog_token
-     << ", t5=" << m_t5 << ", t6=" << m_t6;
+  os << "trigger=" << m_trigger;
   if (m_ftm_params_set)
     {
       os << ", FTM_PARAMS: ";
       m_ftm_params.Print(os);
     }
-}
-
-void
-FtmRequestHeader::SetDialogToken (uint8_t dialog_token)
-{
-  m_dialog_token = dialog_token;
-}
-
-uint8_t
-FtmRequestHeader::GetDialogToken (void) const
-{
-  return m_dialog_token;
-}
-
-void
-FtmRequestHeader::SetT5 (uint64_t t5)
-{
-  m_t5 = t5;
-}
-
-uint64_t
-FtmRequestHeader::GetT5 (void) const
-{
-  return m_t5;
-}
-
-void
-FtmRequestHeader::SetT6 (uint64_t t6)
-{
-  m_t6 = t6;
-}
-
-uint64_t
-FtmRequestHeader::GetT6 (void) const
-{
-  return m_t6;
 }
 
 void
@@ -544,7 +476,6 @@ FtmResponseHeader::GetInstanceTypeId (void) const
   return GetTypeId ();
 }
 
-
 FtmResponseHeader::FtmResponseHeader ()
 {
   m_dialog_token = 0;
@@ -553,6 +484,8 @@ FtmResponseHeader::FtmResponseHeader ()
   m_toa = 0;
   m_tod_error = 0;
   m_toa_error = 0;
+  m_etaR = 0.0;
+  m_etaRSet = false;
 
   union { //source: https://stackoverflow.com/a/1001373
     uint32_t i;
@@ -568,17 +501,45 @@ FtmResponseHeader::~FtmResponseHeader ()
 
 }
 
+void
+FtmResponseHeader::SetEtaR (double etaR)
+{
+  m_etaR = etaR;
+  m_etaRSet = true;
+}
+
+bool
+FtmResponseHeader::IsEtaRSet () const
+{
+  return m_etaRSet;
+}
+
+double
+FtmResponseHeader::GetEtaR () const
+{
+  return m_etaR;
+}
+
 uint32_t
 FtmResponseHeader::GetSerializedSize (void) const
 {
+  uint32_t size = 18; // existing default
   if (m_ftm_params_set)
     {
-      return 18 + m_ftm_params.GetSerializedSize();
+      size += m_ftm_params.GetSerializedSize ();
+    }
+  // NEW:
+  if (m_etaRSet)
+    {
+      // 1 extra byte to indicate presence + 8 bytes for the double
+      size += 9;
     }
   else
     {
-      return 18;
+      // 1 extra byte to indicate "no ratio"
+      size += 1;
     }
+  return size;
 }
 
 /*
@@ -606,13 +567,41 @@ FtmResponseHeader::Serialize (Buffer::Iterator start) const
           start.WriteU8((m_toa >> (8 * i)) &0xFF);
       }
   }
-
   start.WriteHtonU16(m_tod_error);
   start.WriteHtonU16(m_toa_error);
 
   if (m_ftm_params_set)
     {
       m_ftm_params.Serialize(start);
+    }
+
+  if (m_etaRSet)
+    {
+      start.WriteU8 (1); // a flag indicating ratio is present
+      union
+      {
+        double d;
+        uint8_t b[8];
+      } conv;
+      conv.d = m_etaR;
+      if (m_big_endian)
+        {
+          for (int i = 0; i < 8; i++)
+            {
+              start.WriteU8 (conv.b[i]);
+            }
+        }
+      else
+        {
+          for (int i = 7; i >= 0; i--)
+            {
+              start.WriteU8 (conv.b[i]);
+            }
+        }
+    }
+  else
+    {
+      start.WriteU8 (0); // ratio not present
     }
 }
 
@@ -662,11 +651,66 @@ FtmResponseHeader::Deserialize (Buffer::Iterator start)
 
       m_ftm_params.Deserialize(start);
       m_ftm_params_set = true;
-      return 18 + m_ftm_params.GetSerializedSize();
+    }
+    else
+    {
+      m_ftm_params_set = false;
     }
 
-  return 18; // the number of bytes consumed.
+ uint8_t ratioFlag = 0;
+  if (start.GetRemainingSize() >= 1)
+    {
+      ratioFlag = start.ReadU8();
+    }
+  else
+    {
+      ratioFlag = 0;
+    }
+
+  if (ratioFlag == 1 && start.GetRemainingSize() >= 8)
+    {
+      union {
+        double d;
+        uint8_t b[8];
+      } conv;
+      if (m_big_endian)
+        {
+          for (int i = 0; i < 8; i++)
+            {
+              conv.b[i] = start.ReadU8();
+            }
+        }
+      else
+        {
+          for (int i = 7; i >= 0; i--)
+            {
+              conv.b[i] = start.ReadU8();
+            }
+        }
+      m_etaR = conv.d;
+      m_etaRSet = true;
+    }
+  else
+    {
+      m_etaR = 0.0;
+      m_etaRSet = false;
+    }
+
+  uint32_t totalBytes = 18; // base fields
+  if (m_ftm_params_set)
+    {
+      totalBytes += m_ftm_params.GetSerializedSize();
+    }
+  // ratio presence always consumes +1 byte, if ratioFlag==1 => +8 more
+  totalBytes += 1; // the ratio flag itself
+  if (m_etaRSet)
+    {
+      totalBytes += 8;
+    }
+
+  return totalBytes;
 }
+
 
 void
 FtmResponseHeader::Print (std::ostream &os) const
@@ -676,6 +720,15 @@ FtmResponseHeader::Print (std::ostream &os) const
       << ", TOD=" << m_tod << ", TOA=" << m_toa
       << ", TOD_Error=" << m_tod_error
       << ", TOA_Error=" << m_toa_error;
+  if (m_etaRSet)
+    {
+      os << ", EtaR=" << m_etaR;
+    }
+  if (m_ftm_params_set)
+    {
+      os << ", FTM_PARAMS: ";
+      m_ftm_params.Print(os);
+    }
 }
 
 void

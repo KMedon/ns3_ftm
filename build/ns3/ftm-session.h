@@ -225,18 +225,19 @@ public:
    *
    * \return the mean RTT
    */
+
+  double GetMeanTftm (void);
+
+  std::list<double> GetIndividualTftm (void);
+
   int64_t GetMeanRTT (void);
 
-  int64_t GetMeanTFTM (void);
 
   /**
    * Returns a list with all the RTTs.
    *
    * \return list of RTTs
    */
-
-  std::list<int64_t> GetIndividualTFTM (void);
-
 
   std::list<int64_t> GetIndividualRTT (void);
 
@@ -335,7 +336,7 @@ private:
 
   std::list<int64_t> m_rtt_list; //!< The RTT list.
 
-  std::list<int64_t> m_tftm_list;
+  std::list<double> m_tftm_list; //!< The Tftm list.
 
   std::list<double> m_sig_str_list; //!< The signal strength list.
 
@@ -445,7 +446,7 @@ private:
    */
   void CalculateRTT (Ptr<FtmDialog> dialog);
 
-  void CalculateTFTM (Ptr<FtmDialog> dialog);
+  void ComputeTftm (Ptr<FtmDialog> dialog, double etaR); // uses t2, t3, t5 to compute T_p
 
   /**
    * Checks if time stamps in dialog are 0. Used during RTT calculation. If at least one time stamp is 0, RTT is 0.
@@ -456,6 +457,8 @@ private:
   bool CheckTimeStampEqualZero (Ptr<FtmDialog> dialog);
 
   Callback<void, Mac48Address, FtmRequestHeader> session_override; //!< The session over ride callback to the manager.
+
+  double ComputeEtaR (Ptr<FtmDialog> dialog);    // (t4 - t1) / (t4 - t6)
 
   /**
    * Even number of callbacks break the code following declaration, odd number works. So this code fix callback
